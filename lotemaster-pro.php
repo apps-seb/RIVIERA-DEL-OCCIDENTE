@@ -121,6 +121,8 @@ class LoteMasterPro {
 
             map = L.map('lmp-admin-map', { crs: L.CRS.Simple, minZoom: -3 });
 
+            var zoomInput = $('input[name="lmp_initial_zoom"]');
+
             function loadMap(url) {
                 if(imgOverlay) map.removeLayer(imgOverlay);
                 var img = new Image();
@@ -128,12 +130,29 @@ class LoteMasterPro {
                 img.onload = function() {
                     var bounds = [[0,0], [this.height, this.width]];
                     imgOverlay = L.imageOverlay(url, bounds).addTo(map);
-                    map.fitBounds(bounds);
+
+                    var savedZoom = parseFloat(zoomInput.val());
+                    if(!isNaN(savedZoom)) {
+                        map.setView(bounds.getCenter(), savedZoom);
+                    } else {
+                        map.fitBounds(bounds);
+                    }
                     renderMarkers();
                 }
             }
 
             if('<?php echo $map_image_url; ?>') loadMap('<?php echo $map_image_url; ?>');
+
+            // --- REAL-TIME ZOOM SYNC ---
+            map.on('zoomend', function() {
+                zoomInput.val(map.getZoom());
+            });
+
+            zoomInput.on('change input', function() {
+                var val = parseFloat($(this).val());
+                if(!isNaN(val)) map.setZoom(val);
+            });
+            // ---------------------------
 
             map.on('click', function(e) {
                 if($('#lmp-edit-panel').is(':visible') && currentDataIndex > -1) return alert("Guarda el lote actual primero.");
@@ -336,18 +355,20 @@ class LoteMasterPro {
 
             var bounds;
             var img = new Image();
-            img.src = '<?php echo $map_image_url; ?>';
             var initialZoom = '<?php echo $initial_zoom; ?>';
             
             img.onload = function() {
                 bounds = [[0,0], [this.height, this.width]];
                 L.imageOverlay('<?php echo $map_image_url; ?>', bounds).addTo(map);
-                if(initialZoom !== '') {
-                    map.setView(bounds.getCenter(), parseFloat(initialZoom));
+
+                var zoomVal = parseFloat(initialZoom);
+                if(!isNaN(zoomVal)) {
+                    map.setView(bounds.getCenter(), zoomVal);
                 } else {
                     map.fitBounds(bounds);
                 }
             }
+            img.src = '<?php echo $map_image_url; ?>';
 
             var slider = document.getElementById('size-slider-<?php echo $post_id; ?>');
             var wrapper = document.getElementById('lmp-wrapper-<?php echo $post_id; ?>');
