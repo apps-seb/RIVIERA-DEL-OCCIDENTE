@@ -134,22 +134,28 @@ class LoteMasterPro {
 
             function loadMap(url) {
                 if(imgOverlay) map.removeLayer(imgOverlay);
+
+                // LEER ZOOM GUARDADO ANTES DE CUALQUIER MANIPULACIÓN
+                var savedZoomVal = zoomInput.val();
+                // Sanitizar: coma a punto
+                savedZoomVal = savedZoomVal.replace(',', '.');
+                var savedZoom = parseFloat(savedZoomVal);
+
                 var img = new Image();
                 img.onload = function() {
                     var bounds = L.latLngBounds([[0,0], [this.height, this.width]]);
                     imgOverlay = L.imageOverlay(url, bounds).addTo(map);
 
-                    // 1. Siempre ajustar a límites primero
-                    map.fitBounds(bounds);
-
-                    // 2. Calcular minZoom permisivo
+                    // Configurar minZoom permisivo desde el principio
                     map.setMinZoom(-5);
 
-                    var savedZoom = parseFloat(zoomInput.val());
-
-                    // 3. Aplicar zoom guardado si existe, manteniendo el centro
                     if(!isNaN(savedZoom)) {
-                        map.setZoom(savedZoom);
+                        // SI HAY ZOOM GUARDADO: Usarlo directamente.
+                        // Calculamos el centro de la imagen para centrar el mapa allí.
+                        map.setView(bounds.getCenter(), savedZoom);
+                    } else {
+                        // SI NO HAY ZOOM GUARDADO: Ajustar a la imagen (fitBounds).
+                        map.fitBounds(bounds);
                     }
 
                     renderMarkers();
@@ -401,17 +407,17 @@ class LoteMasterPro {
                 bounds = L.latLngBounds([[0,0], [this.height, this.width]]);
                 L.imageOverlay('<?php echo $map_image_url; ?>', bounds).addTo(map);
 
-                // 1. Siempre ajustar a la imagen primero para centrar correctamente
-                map.fitBounds(bounds);
-
-                // 2. Calcular minZoom permisivo
+                // Configurar minZoom permisivo
                 map.setMinZoom(-5);
 
                 var zoomVal = parseFloat(initialZoom);
 
-                // 3. Si hay zoom guardado, aplicarlo manteniendo el centro de la imagen
                 if(!isNaN(zoomVal)) {
-                    map.setZoom(zoomVal);
+                    // SI HAY ZOOM GUARDADO: Usarlo directamente.
+                    map.setView(bounds.getCenter(), zoomVal);
+                } else {
+                    // SI NO HAY ZOOM GUARDADO: Ajustar a la imagen.
+                    map.fitBounds(bounds);
                 }
             }
             img.src = '<?php echo $map_image_url; ?>';
