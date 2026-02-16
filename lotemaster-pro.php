@@ -139,18 +139,17 @@ class LoteMasterPro {
                     var bounds = L.latLngBounds([[0,0], [this.height, this.width]]);
                     imgOverlay = L.imageOverlay(url, bounds).addTo(map);
 
-                    // 1. Establecer límites pero permitir zoom libre en Admin
-                    var fitZoom = map.getBoundsZoom(bounds);
-                    map.setMinZoom(-5); // Permitir alejar bastante siempre
+                    // 1. Siempre ajustar a límites primero
+                    map.fitBounds(bounds);
+
+                    // 2. Calcular minZoom permisivo
+                    map.setMinZoom(-5);
 
                     var savedZoom = parseFloat(zoomInput.val());
 
-                    // 2. Prioridad al zoom guardado
+                    // 3. Aplicar zoom guardado si existe, manteniendo el centro
                     if(!isNaN(savedZoom)) {
-                        map.setView(bounds.getCenter(), savedZoom);
-                    } else {
-                        // Si no hay zoom guardado, ajustar a la imagen
-                        map.fitBounds(bounds);
+                        map.setZoom(savedZoom);
                     }
 
                     renderMarkers();
@@ -391,7 +390,6 @@ class LoteMasterPro {
             var map = L.map(mapId, { 
                 crs: L.CRS.Simple, 
                 minZoom: -5, // Permitir zoom amplio
-                maxZoom: 3,  // Permitir zoom detallado
                 zoomSnap: 0.1 
             });
 
@@ -403,18 +401,17 @@ class LoteMasterPro {
                 bounds = L.latLngBounds([[0,0], [this.height, this.width]]);
                 L.imageOverlay('<?php echo $map_image_url; ?>', bounds).addTo(map);
 
-                // 1. Establecer límites pero permitir zoom libre
-                var fitZoom = map.getBoundsZoom(bounds);
-                map.setMinZoom(-5); // Permitir alejar bastante siempre
+                // 1. Siempre ajustar a la imagen primero para centrar correctamente
+                map.fitBounds(bounds);
+
+                // 2. Calcular minZoom permisivo
+                map.setMinZoom(-5);
 
                 var zoomVal = parseFloat(initialZoom);
 
-                // 2. Prioridad al zoom guardado
+                // 3. Si hay zoom guardado, aplicarlo manteniendo el centro de la imagen
                 if(!isNaN(zoomVal)) {
-                    map.setView(bounds.getCenter(), zoomVal);
-                } else {
-                    // Si no hay zoom guardado, ajustar a la imagen
-                    map.fitBounds(bounds);
+                    map.setZoom(zoomVal);
                 }
             }
             img.src = '<?php echo $map_image_url; ?>';
