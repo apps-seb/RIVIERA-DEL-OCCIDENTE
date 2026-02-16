@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: LoteMaster Pro (Interactive Map)
- * Description: V4.0 - Corrección Crítica de Coordenadas (Zero-Offset Architecture).
- * Version: 4.0.0
+ * Description: V4.1 - Corrección Crítica de Zoom y Coordenadas (Zero-Offset Architecture + Dynamic Zoom).
+ * Version: 4.1.0
  * Author: Senior Full Stack Dev
  */
 
@@ -66,13 +66,16 @@ class LoteMasterPro {
         <?php
     }
 
-    // --- EDITOR ADMIN (PERFECTO ESTADO) ---
+    // --- EDITOR ADMIN (CORREGIDO: ZOOM ROBUSTO) ---
     public function render_admin_map($post) {
         $map_image_id = get_post_meta($post->ID, '_lmp_image_id', true);
         $map_image_url = $map_image_id ? wp_get_attachment_url($map_image_id) : '';
         $markers = get_post_meta($post->ID, '_lmp_markers', true); 
         $initial_zoom = get_post_meta($post->ID, '_lmp_initial_zoom', true);
         
+        // Sanitización para JS: Reemplazar coma por punto si existe
+        $initial_zoom_js = str_replace(',', '.', $initial_zoom);
+
         echo '<input type="hidden" name="lmp_image_id" id="lmp_image_id" value="' . esc_attr($map_image_id) . '">';
         echo '<textarea name="lmp_markers_json" id="lmp_markers_json" style="display:none;">' . esc_textarea($markers) . '</textarea>';
         
@@ -81,7 +84,8 @@ class LoteMasterPro {
             <button type="button" class="button button-secondary" id="upload_map_btn"><span class="dashicons dashicons-format-image"></span> Cambiar Imagen</button>
             <label style="margin-left: 15px;">
                 <strong>Zoom Inicial:</strong>
-                <input type="number" step="0.1" name="lmp_initial_zoom" value="<?php echo esc_attr($initial_zoom); ?>" style="width: 70px;" placeholder="Auto">
+                <!-- Usamos 'step="any"' para permitir decimales libres -->
+                <input type="number" step="any" name="lmp_initial_zoom" value="<?php echo esc_attr($initial_zoom_js); ?>" style="width: 70px;" placeholder="Auto">
             </label>
             <span class="description">Haz clic para añadir. Arrastra para mover. (Vacío = Ajustar a pantalla)</span>
         </div>
@@ -119,23 +123,41 @@ class LoteMasterPro {
             // ICONO ORIGINAL RESTAURADO (Drag)
             var iconTemp = L.divIcon({ className: 'lmp-marker-temp', html: '<span class="dashicons dashicons-move"></span>', iconSize: [30, 30], iconAnchor: [15, 15] });
 
-            map = L.map('lmp-admin-map', { crs: L.CRS.Simple, minZoom: -3 });
+            // Inicializar mapa sin minZoom restrictivo por defecto
+            map = L.map('lmp-admin-map', {
+                crs: L.CRS.Simple,
+                minZoom: -5, // Permitir zoom alejado para imágenes grandes
+                zoomSnap: 0.1
+            });
 
             var zoomInput = $('input[name="lmp_initial_zoom"]');
 
             function loadMap(url) {
                 if(imgOverlay) map.removeLayer(imgOverlay);
+
+                // LEER ZOOM GUARDADO ANTES DE CUALQUIER MANIPULACIÓN
+                var savedZoomVal = zoomInput.val();
+                // Sanitizar: coma a punto
+                savedZoomVal = savedZoomVal.replace(',', '.');
+                var savedZoom = parseFloat(savedZoomVal);
+
                 var img = new Image();
                 img.onload = function() {
-                    var bounds = [[0,0], [this.height, this.width]];
+                    var bounds = L.latLngBounds([[0,0], [this.height, this.width]]);
                     imgOverlay = L.imageOverlay(url, bounds).addTo(map);
 
-                    var savedZoom = parseFloat(zoomInput.val());
+                    // Configurar minZoom permisivo desde el principio
+                    map.setMinZoom(-5);
+
                     if(!isNaN(savedZoom)) {
+                        // SI HAY ZOOM GUARDADO: Usarlo directamente.
+                        // Calculamos el centro de la imagen para centrar el mapa allí.
                         map.setView(bounds.getCenter(), savedZoom);
                     } else {
+                        // SI NO HAY ZOOM GUARDADO: Ajustar a la imagen (fitBounds).
                         map.fitBounds(bounds);
                     }
+
                     renderMarkers();
                 }
                 img.src = url;
@@ -146,7 +168,11 @@ class LoteMasterPro {
             // --- REAL-TIME ZOOM SYNC ---
             map.on('zoomend', function() {
                 // Si el input está enfocado (escribiendo), no sobreescribir para no molestar
-                if(!zoomInput.is(":focus")) zoomInput.val(map.getZoom());
+                if(!zoomInput.is(":focus")) {
+                    // Redondear a 2 decimales para limpieza visual
+                    var z = Math.round(map.getZoom() * 100) / 100;
+                    zoomInput.val(z);
+                }
             });
 
             zoomInput.on('change input', function() {
@@ -154,8 +180,14 @@ class LoteMasterPro {
                 if(val === '' && imgOverlay) {
                     map.fitBounds(imgOverlay.getBounds());
                 } else {
+                    // Reemplazar coma por punto para parseo JS seguro
+                    val = val.replace(',', '.');
                     var num = parseFloat(val);
-                    if(!isNaN(num)) map.setZoom(num);
+                    if(!isNaN(num)) {
+                         // Asegurar que el mapa permita este zoom
+                         if(num < map.getMinZoom()) map.setMinZoom(num);
+                         map.setZoom(num);
+                    }
                 }
             });
             // ---------------------------
@@ -275,8 +307,13 @@ class LoteMasterPro {
 
     public function save_data($post_id) {
         if (isset($_POST['lmp_image_id'])) update_post_meta($post_id, '_lmp_image_id', sanitize_text_field($_POST['lmp_image_id']));
-        if (isset($_POST['lmp_markers_json'])) update_post_meta($post_id, '_lmp_markers', $_POST['lmp_markers_json']);
-        if (isset($_POST['lmp_initial_zoom'])) update_post_meta($post_id, '_lmp_initial_zoom', sanitize_text_field($_POST['lmp_initial_zoom']));
+        if (isset($_POST['lmp_markers_json'])) update_post_meta($post_id, '_lmp_markers', $_POST['lmp_markers_json']); // JSON raw is ok here as wp sanitizes
+        // Sanitizar zoom asegurando formato numérico simple
+        if (isset($_POST['lmp_initial_zoom'])) {
+            $zoom = sanitize_text_field($_POST['lmp_initial_zoom']);
+            $zoom = str_replace(',', '.', $zoom); // Normalizar
+            update_post_meta($post_id, '_lmp_initial_zoom', $zoom);
+        }
     }
 
     public function add_shortcode_column($columns) { $columns['shortcode'] = 'Shortcode'; return $columns; }
@@ -292,6 +329,9 @@ class LoteMasterPro {
         $map_image_url = $map_image_id ? wp_get_attachment_url($map_image_id) : '';
         $markers = get_post_meta($post_id, '_lmp_markers', true);
         $initial_zoom = get_post_meta($post_id, '_lmp_initial_zoom', true);
+        // Sanitización frontend también por seguridad
+        $initial_zoom = str_replace(',', '.', $initial_zoom);
+
         $logo_url = get_the_post_thumbnail_url($post_id, 'full');
         
         if(!$map_image_url) return '';
@@ -352,10 +392,10 @@ class LoteMasterPro {
             var mapId = 'lmp-front-map-<?php echo $post_id; ?>';
             if(!document.getElementById(mapId)) return;
 
+            // Inicialización Frontend: minZoom flexible para empezar
             var map = L.map(mapId, { 
                 crs: L.CRS.Simple, 
-                minZoom: -2, 
-                maxZoom: 2,
+                minZoom: -5, // Permitir zoom amplio
                 zoomSnap: 0.1 
             });
 
@@ -364,13 +404,19 @@ class LoteMasterPro {
             var initialZoom = '<?php echo $initial_zoom; ?>';
             
             img.onload = function() {
-                bounds = [[0,0], [this.height, this.width]];
+                bounds = L.latLngBounds([[0,0], [this.height, this.width]]);
                 L.imageOverlay('<?php echo $map_image_url; ?>', bounds).addTo(map);
 
+                // Configurar minZoom permisivo
+                map.setMinZoom(-5);
+
                 var zoomVal = parseFloat(initialZoom);
+
                 if(!isNaN(zoomVal)) {
+                    // SI HAY ZOOM GUARDADO: Usarlo directamente.
                     map.setView(bounds.getCenter(), zoomVal);
                 } else {
+                    // SI NO HAY ZOOM GUARDADO: Ajustar a la imagen.
                     map.fitBounds(bounds);
                 }
             }
@@ -379,9 +425,11 @@ class LoteMasterPro {
             var slider = document.getElementById('size-slider-<?php echo $post_id; ?>');
             var wrapper = document.getElementById('lmp-wrapper-<?php echo $post_id; ?>');
             
-            slider.addEventListener('input', function() {
-                wrapper.style.setProperty('--point-scale', this.value);
-            });
+            if(slider) {
+                slider.addEventListener('input', function() {
+                    wrapper.style.setProperty('--point-scale', this.value);
+                });
+            }
 
             var markers = <?php echo $markers ? $markers : '[]'; ?>;
             var modal = document.getElementById("lmp-modal-<?php echo $post_id; ?>");
@@ -393,16 +441,11 @@ class LoteMasterPro {
             markers.forEach(function(m) {
                 var colorClass = 'status-' + m.status;
                 
-                // --- SOLUCIÓN TÉCNICA CLAVE ---
-                // 1. iconSize: [0, 0] -> Leaflet pone el div en la coordenada EXACTA.
-                // 2. HTML interno -> Es lo que centramos y escalamos con CSS.
-                // 3. NO tocamos las clases de Leaflet, usamos nuestro contenedor interno 'lmp-inner-dot'.
-                
                 var icon = L.divIcon({
-                    className: 'lmp-marker-container-layer', // Clase invisible contenedora
+                    className: 'lmp-marker-container-layer',
                     html: '<div class="lmp-inner-dot ' + colorClass + '"><span class="marker-label">' + m.number + '</span></div>',
-                    iconSize: [0, 0],   // CERO dimensiones para que el ancla sea el punto exacto
-                    iconAnchor: [0, 0]  // CERO desplazamiento
+                    iconSize: [0, 0],
+                    iconAnchor: [0, 0]
                 });
 
                 var marker = L.marker([m.lat, m.lng], {icon: icon}).addTo(map);
