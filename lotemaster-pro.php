@@ -126,7 +126,6 @@ class LoteMasterPro {
             function loadMap(url) {
                 if(imgOverlay) map.removeLayer(imgOverlay);
                 var img = new Image();
-                img.src = url;
                 img.onload = function() {
                     var bounds = [[0,0], [this.height, this.width]];
                     imgOverlay = L.imageOverlay(url, bounds).addTo(map);
@@ -139,18 +138,25 @@ class LoteMasterPro {
                     }
                     renderMarkers();
                 }
+                img.src = url;
             }
 
             if('<?php echo $map_image_url; ?>') loadMap('<?php echo $map_image_url; ?>');
 
             // --- REAL-TIME ZOOM SYNC ---
             map.on('zoomend', function() {
-                zoomInput.val(map.getZoom());
+                // Si el input está enfocado (escribiendo), no sobreescribir para no molestar
+                if(!zoomInput.is(":focus")) zoomInput.val(map.getZoom());
             });
 
             zoomInput.on('change input', function() {
-                var val = parseFloat($(this).val());
-                if(!isNaN(val)) map.setZoom(val);
+                var val = $(this).val();
+                if(val === '' && imgOverlay) {
+                    map.fitBounds(imgOverlay.getBounds());
+                } else {
+                    var num = parseFloat(val);
+                    if(!isNaN(num)) map.setZoom(num);
+                }
             });
             // ---------------------------
 
