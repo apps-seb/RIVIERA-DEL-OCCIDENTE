@@ -136,7 +136,7 @@ class LoteMasterPro {
                 if(imgOverlay) map.removeLayer(imgOverlay);
                 var img = new Image();
                 img.onload = function() {
-                    var bounds = [[0,0], [this.height, this.width]];
+                    var bounds = L.latLngBounds([[0,0], [this.height, this.width]]);
                     imgOverlay = L.imageOverlay(url, bounds).addTo(map);
 
                     // 1. Establecer límites pero permitir zoom libre en Admin
@@ -400,7 +400,7 @@ class LoteMasterPro {
             var initialZoom = '<?php echo $initial_zoom; ?>';
             
             img.onload = function() {
-                bounds = [[0,0], [this.height, this.width]];
+                bounds = L.latLngBounds([[0,0], [this.height, this.width]]);
                 L.imageOverlay('<?php echo $map_image_url; ?>', bounds).addTo(map);
 
                 // 1. Establecer límites pero permitir zoom libre
