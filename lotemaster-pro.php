@@ -48,8 +48,14 @@ class LoteMasterPro {
     }
 
     public function enqueue_front_assets() {
-        wp_enqueue_style('leaflet-css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
-        wp_enqueue_script('leaflet-js', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', [], '1.9.4', true);
+        // Three.js & Dependencies
+        wp_enqueue_script('three-js', 'https://unpkg.com/three@0.128.0/build/three.min.js', [], '0.128.0', true);
+        wp_enqueue_script('three-orbit', 'https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js', ['three-js'], '0.128.0', true);
+        wp_enqueue_script('three-css2d', 'https://unpkg.com/three@0.128.0/examples/js/renderers/CSS2DRenderer.js', ['three-js'], '0.128.0', true);
+
+        // Custom Assets
+        wp_enqueue_style('lmp-style', plugin_dir_url(__FILE__) . 'assets/css/lmp-style.css', [], '1.0');
+        wp_enqueue_script('lmp-viewer', plugin_dir_url(__FILE__) . 'assets/js/lmp-viewer.js', ['three-js', 'three-orbit', 'three-css2d'], '1.0', true);
     }
 
     // 3. Metaboxes (Editor y Shortcode Info)
@@ -331,23 +337,54 @@ class LoteMasterPro {
         }
     }
 
-    // 5. Render Frontend (Igual que antes pero optimizado)
+    // 5. Render Frontend (3D & Filter Cards)
     public function render_map($atts) {
         $atts = shortcode_atts(['id' => 0], $atts);
         $post_id = $atts['id'];
         $map_image_id = get_post_meta($post_id, '_lmp_image_id', true);
         $map_image_url = $map_image_id ? wp_get_attachment_url($map_image_id) : '';
-        $markers = get_post_meta($post_id, '_lmp_markers', true);
+        $markers_json = get_post_meta($post_id, '_lmp_markers', true);
+        $markers = json_decode($markers_json, true);
+        if(!is_array($markers)) $markers = [];
         $logo_url = get_the_post_thumbnail_url($post_id, 'full');
         
         if(!$map_image_url) return '<p style="color:red; border:1px solid red; padding:10px;">Error: El mapa no tiene imagen asignada.</p>';
 
+        // Calcular conteos
+        $counts = ['all' => count($markers), 'available' => 0, 'reserved' => 0, 'sold' => 0];
+        foreach($markers as $m) {
+            if(isset($counts[$m['status']])) $counts[$m['status']]++;
+        }
+
         ob_start();
         ?>
-        <div id="lmp-wrapper-<?php echo $post_id; ?>" style="position:relative;">
-            <div id="lmp-front-map-<?php echo $post_id; ?>" style="width: 100%; height: 80vh; background: #eee; border: 1px solid #ddd; border-radius: 8px;"></div>
+        <div id="lmp-wrapper-<?php echo $post_id; ?>" class="lmp-main-wrapper">
+
+            <!-- Filter Bar -->
+            <div class="lmp-filter-bar">
+                <div class="lmp-filter-card active" data-filter="all">
+                    <span class="lmp-count"><?php echo $counts['all']; ?></span>
+                    <span class="lmp-text">Todos</span>
+                </div>
+                <div class="lmp-filter-card" data-filter="available" style="border-bottom: 3px solid #2ecc71;">
+                    <span class="lmp-count"><?php echo $counts['available']; ?></span>
+                    <span class="lmp-text">Disponibles</span>
+                </div>
+                <div class="lmp-filter-card" data-filter="reserved" style="border-bottom: 3px solid #f39c12;">
+                    <span class="lmp-count"><?php echo $counts['reserved']; ?></span>
+                    <span class="lmp-text">Apartados</span>
+                </div>
+                <div class="lmp-filter-card" data-filter="sold" style="border-bottom: 3px solid #e74c3c;">
+                    <span class="lmp-count"><?php echo $counts['sold']; ?></span>
+                    <span class="lmp-text">Vendidos</span>
+                </div>
+            </div>
+
+            <!-- 3D Map Container -->
+            <div id="lmp-3d-viewer-<?php echo $post_id; ?>" class="lmp-viewer-container"></div>
         </div>
         
+        <!-- Modal (Reused) -->
         <div id="lmp-modal-<?php echo $post_id; ?>" class="lmp-modal">
             <div class="lmp-modal-content">
                 <span class="lmp-close">&times;</span>
@@ -375,54 +412,37 @@ class LoteMasterPro {
 
         <script>
         document.addEventListener('DOMContentLoaded', function() {
-            var mapId = 'lmp-front-map-<?php echo $post_id; ?>';
-            if(!document.getElementById(mapId)) return;
-
-            var map = L.map(mapId, { crs: L.CRS.Simple, minZoom: -2, maxZoom: 2, zoomSnap: 0.5 });
-            var img = new Image();
-            img.src = '<?php echo $map_image_url; ?>';
-            
-            img.onload = function() {
-                var bounds = [[0,0], [this.height, this.width]];
-                L.imageOverlay('<?php echo $map_image_url; ?>', bounds).addTo(map);
-                map.fitBounds(bounds);
+            if(typeof initLMPViewer === 'function') {
+                var config = {
+                    containerId: 'lmp-3d-viewer-<?php echo $post_id; ?>',
+                    imageUrl: '<?php echo $map_image_url; ?>',
+                    markers: <?php echo json_encode($markers); ?>,
+                    modalId: 'lmp-modal-<?php echo $post_id; ?>',
+                    ajaxUrl: '<?php echo admin_url('admin-ajax.php'); ?>'
+                };
+                initLMPViewer(config);
             }
+        });
 
-            var markers = <?php echo $markers ? $markers : '[]'; ?>;
+        // Modal & Form Logic (Vanilla JS separate from 3D logic for cleanliness)
+        (function() {
             var modal = document.getElementById("lmp-modal-<?php echo $post_id; ?>");
             var close = modal.querySelector(".lmp-close");
             var form = modal.querySelector(".lmp-quote-form");
+            var wrapper = document.getElementById("lmp-wrapper-<?php echo $post_id; ?>");
 
-            markers.forEach(function(m) {
-                var colorClass = 'status-' + m.status;
-                var icon = L.divIcon({
-                    className: 'lmp-front-marker ' + colorClass,
-                    html: '<span>' + m.number + '</span>',
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14]
-                });
-
-                var marker = L.marker([m.lat, m.lng], {icon: icon}).addTo(map);
-                
-                marker.on('click', function() {
-                    openModal(m);
+            // Filter Logic
+            var filters = wrapper.querySelectorAll('.lmp-filter-card');
+            filters.forEach(function(f) {
+                f.addEventListener('click', function() {
+                    filters.forEach(el => el.classList.remove('active'));
+                    this.classList.add('active');
+                    var filter = this.getAttribute('data-filter');
+                    // Dispatch event for the 3D viewer to catch
+                    var event = new CustomEvent('lmp-filter-change', { detail: { filter: filter, containerId: 'lmp-3d-viewer-<?php echo $post_id; ?>' } });
+                    document.dispatchEvent(event);
                 });
             });
-
-            function openModal(data) {
-                modal.querySelector('.modal-lot-number').innerText = data.number;
-                modal.querySelector('.input-lot-number').value = data.number;
-                modal.querySelector('.modal-price').innerText = data.price;
-                modal.querySelector('.modal-area').innerText = data.area;
-                
-                var statusText = { 'available': 'Disponible', 'reserved': 'Apartado', 'sold': 'Vendido' };
-                var statusEl = modal.querySelector('.modal-status');
-                statusEl.innerText = statusText[data.status];
-                statusEl.className = 'modal-status st-' + data.status;
-
-                form.style.display = data.status === 'sold' ? 'none' : 'block';
-                modal.style.display = "block";
-            }
 
             close.onclick = function() { modal.style.display = "none"; }
             window.onclick = function(event) { if (event.target == modal) { modal.style.display = "none"; } }
@@ -445,15 +465,10 @@ class LoteMasterPro {
                     setTimeout(() => { modal.style.display = "none"; btn.disabled = false; btn.innerText = originalText; form.reset(); modal.querySelector('.lmp-msg').innerText=''; }, 2000);
                 });
             });
-        });
+        })();
         </script>
         <style>
-            .lmp-front-marker { background: white; border-radius: 50%; text-align: center; border: 2px solid white; font-weight: bold; line-height: 24px; font-size: 11px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: all 0.2s; }
-            .lmp-front-marker:hover { transform: scale(1.2); z-index: 1000 !important; }
-            .status-available { background: #2ecc71; border-color: #27ae60; color: white; }
-            .status-reserved { background: #f39c12; border-color: #d35400; color: white; }
-            .status-sold { background: #e74c3c; border-color: #c0392b; color: white; opacity: 0.6; }
-            
+            /* Modal Styles */
             .lmp-modal { display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
             .lmp-modal-content { background-color: #fff; margin: 5% auto; padding: 0; border: 0; width: 90%; max-width: 450px; border-radius: 12px; position: relative; box-shadow: 0 20px 50px rgba(0,0,0,0.3); overflow: hidden; font-family: 'Segoe UI', sans-serif; }
             .lmp-modal-header { background: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #eee; }
@@ -466,6 +481,9 @@ class LoteMasterPro {
             .lmp-quote-form button { width: 100%; background: #333; color: white; padding: 15px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.3s; }
             .lmp-quote-form button:hover { background: #000; }
             .st-available { color: #2ecc71; } .st-reserved { color: #f39c12; } .st-sold { color: #e74c3c; }
+            .modal-status.st-available { color: #2ecc71; font-weight: bold; }
+            .modal-status.st-reserved { color: #f39c12; font-weight: bold; }
+            .modal-status.st-sold { color: #e74c3c; font-weight: bold; }
         </style>
         <?php
         return ob_get_clean();
