@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: LoteMaster Pro 3D - Riviera Occidente (Fixed)
- * Description: Versión Corregida: Coordenadas precisas, Clic en PC arreglado y Branding Riviera del Occidente.
- * Version: 5.0.0
+ * Plugin Name: LoteMaster Pro 3D - Riviera Final
+ * Description: V6.0: Solución definitiva a superposición de marcadores (LOD Dinámico), Animación de Gestos y Branding Riviera.
+ * Version: 6.0.0
  * Author: Senior Full Stack Dev
  */
 
@@ -17,7 +17,6 @@ class LoteMasterPro {
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
         add_action('wp_enqueue_scripts', [$this, 'enqueue_front_assets']);
         
-        // Columnas
         add_filter('manage_masterplan_posts_columns', [$this, 'add_shortcode_column']);
         add_action('manage_masterplan_posts_custom_column', [$this, 'display_shortcode_column'], 10, 2);
 
@@ -27,7 +26,6 @@ class LoteMasterPro {
         add_action('wp_ajax_nopriv_lotemaster_send_quote', [$this, 'handle_quote']);
     }
 
-    // 1. CPT
     public function register_cpt() {
         register_post_type('masterplan', [
             'labels' => ['name' => 'Masterplans Riviera', 'singular_name' => 'Masterplan', 'add_new_item' => 'Crear Nuevo Mapa'],
@@ -37,7 +35,6 @@ class LoteMasterPro {
         ]);
     }
 
-    // 2. Assets
     public function enqueue_admin_assets($hook) {
         global $post;
         if (($hook == 'post-new.php' || $hook == 'post.php') && 'masterplan' === $post->post_type) {
@@ -53,7 +50,6 @@ class LoteMasterPro {
         wp_enqueue_script('gsap-js', 'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js', [], '3.12.2', true);
     }
 
-    // 3. Metaboxes
     public function add_metaboxes() {
         add_meta_box('lmp_map_editor', 'Editor de Lotes (Plano 2D)', [$this, 'render_admin_map'], 'masterplan', 'normal', 'high');
         add_meta_box('lmp_shortcode_info', 'Instrucciones', [$this, 'render_shortcode_info'], 'masterplan', 'side', 'high');
@@ -68,7 +64,7 @@ class LoteMasterPro {
         <?php
     }
 
-    // --- ADMIN: EDITOR LEAFLET 2D ---
+    // --- ADMIN: EDITOR LEAFLET 2D (Sin cambios, funciona bien) ---
     public function render_admin_map($post) {
         $map_image_id = get_post_meta($post->ID, '_lmp_image_id', true);
         $map_image_url = $map_image_id ? wp_get_attachment_url($map_image_id) : '';
@@ -117,7 +113,6 @@ class LoteMasterPro {
                 img.src = url;
                 img.onload = function() {
                     mapW = this.width; mapH = this.height;
-                    // IMPORTANTE: Definimos los bounds desde 0,0 hasta Alto,Ancho
                     var bounds = [[0,0], [mapH, mapW]];
                     imgOverlay = L.imageOverlay(url, bounds).addTo(map);
                     map.fitBounds(bounds);
@@ -152,10 +147,10 @@ class LoteMasterPro {
             $('#save_point_btn').click(function() {
                 var ll = tempMarker.getLatLng();
                 var data = {
-                    lat: ll.lat, lng: ll.lng, // Guardamos coordenadas crudas de Leaflet
+                    lat: ll.lat, lng: ll.lng,
                     number: $('#input_lot_number').val(), price: $('#input_price').val(),
                     area: $('#input_area').val(), status: $('#input_status').val(),
-                    mapW: mapW, mapH: mapH // Guardamos dimensiones de referencia
+                    mapW: mapW, mapH: mapH 
                 };
                 if(currentIdx > -1) markers[currentIdx] = data; else markers.push(data);
                 updateJSON(); resetEditor();
@@ -211,7 +206,7 @@ class LoteMasterPro {
     }
 
     // -------------------------------------------------------------------------
-    // 4. FRONTEND RENDER: 3D + CORRECCIONES DE COORDENADAS + CLICK FIX
+    // 4. FRONTEND RENDER: LOD DINÁMICO + ANIMACIÓN GESTUAL
     // -------------------------------------------------------------------------
     public function render_map($atts) {
         $atts = shortcode_atts(['id' => 0], $atts);
@@ -239,6 +234,11 @@ class LoteMasterPro {
         ?>
         <div id="lmp-app-<?php echo $post_id; ?>" class="lmp-app-container">
             
+            <div id="lmp-gesture-hint-<?php echo $post_id; ?>" class="lmp-gesture-overlay">
+                <div class="lmp-hand-icon"></div>
+                <p>Usa dos dedos para Zoom o Scroll para acercar</p>
+            </div>
+
             <div class="lmp-filters-scroll-container">
                 <div class="lmp-filters-ui">
                     <div class="lmp-filter-card active" data-filter="all">
@@ -290,47 +290,71 @@ class LoteMasterPro {
         </div>
 
         <style>
-            /* STYLES (Conservados de la versión anterior con ajustes) */
+            /* ESTILOS BASE */
             .lmp-app-container { 
                 position: relative; width: 100%; height: 85vh; overflow: hidden; 
                 font-family: 'Montserrat', 'Segoe UI', sans-serif; 
                 background: linear-gradient(135deg, #061a40 0%, #030d21 100%); 
                 border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); 
             }
+            
+            /* ANIMACIÓN GESTUAL (OVERLAY) */
+            .lmp-gesture-overlay {
+                position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.4); z-index: 50;
+                display: flex; flex-direction: column; align-items: center; justify-content: center;
+                pointer-events: none; /* Permitir interacción a través */
+                animation: fadeOutHint 0.5s ease 4s forwards; /* Desaparece a los 4s */
+            }
+            .lmp-hand-icon {
+                width: 60px; height: 60px;
+                background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>'); 
+                /* Icono simplificado, puedes poner una imagen de mano real */
+                background-size: contain; background-repeat: no-repeat;
+                opacity: 0.8;
+                animation: zoomPulse 1.5s infinite;
+            }
+            .lmp-gesture-overlay p {
+                color: white; margin-top: 15px; font-weight: bold; 
+                text-transform: uppercase; letter-spacing: 1px; font-size: 12px;
+                text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            }
+            @keyframes fadeOutHint { to { opacity: 0; visibility: hidden; } }
+            @keyframes zoomPulse { 
+                0% { transform: scale(1); } 
+                50% { transform: scale(1.2); } 
+                100% { transform: scale(1); } 
+            }
+
+            /* Resto de estilos UI (Filtros, Canvas, Modal) */
             .lmp-filters-scroll-container {
                 position: absolute; top: 20px; left: 0; width: 100%; z-index: 10;
                 overflow-x: auto; -webkit-overflow-scrolling: touch;
                 padding-bottom: 10px; scrollbar-width: none;
             }
             .lmp-filters-scroll-container::-webkit-scrollbar { display: none; }
-            .lmp-filters-ui { 
-                display: flex; gap: 10px; justify-content: center; 
-                min-width: max-content; padding: 0 20px;
-            }
+            .lmp-filters-ui { display: flex; gap: 10px; justify-content: center; min-width: max-content; padding: 0 20px; }
             .lmp-filter-card { 
                 background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); 
                 padding: 10px 20px; border-radius: 30px; cursor: pointer; 
                 display: flex; align-items: center; gap: 10px; 
-                border: 1px solid rgba(255,255,255,0.2);
-                transition: all 0.3s ease; color: white;
+                border: 1px solid rgba(255,255,255,0.2); transition: all 0.3s ease; color: white;
             }
-            .lmp-filter-card.active { 
-                background: rgba(191, 155, 48, 0.9); border-color: #d4af37; color: #000; font-weight: bold;
-            }
+            .lmp-filter-card.active { background: rgba(191, 155, 48, 0.9); border-color: #d4af37; color: #000; font-weight: bold; }
             .lmp-f-label { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
             .lmp-f-count { background: rgba(0,0,0,0.2); padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+            
             .lmp-canvas-wrapper { width: 100%; height: 100%; outline: none; }
-            .lmp-loader { position: absolute; top:50%; left:50%; transform:translate(-50%, -50%); color: #bf9b30; font-size: 1.2rem; }
+            .lmp-loader { position: absolute; top:50%; left:50%; transform:translate(-50%, -50%); color: #bf9b30; }
 
-            /* MODAL ESTILOS */
+            /* Modal Estilos */
             .lmp-modal { display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(6, 26, 64, 0.6); backdrop-filter: blur(4px); }
             .lmp-modal-content { 
                 background: rgba(6, 26, 64, 0.85); backdrop-filter: blur(16px);
                 border: 1px solid rgba(191, 155, 48, 0.5); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
                 margin: 10vh auto; width: 90%; max-width: 380px; border-radius: 20px; overflow: hidden; 
-                animation: modalSlide 0.5s cubic-bezier(0.16, 1, 0.3, 1); color: #fff;
+                color: #fff;
             }
-            @keyframes modalSlide { from {opacity:0; transform:translateY(50px) scale(0.95);} to {opacity:1; transform:translateY(0) scale(1);} }
             .lmp-modal-header { padding: 25px 20px 10px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.1); }
             .lmp-logo { max-height: 40px; margin-bottom: 15px; filter: brightness(0) invert(1); }
             .gold-text { color: #bf9b30; font-weight: 700; letter-spacing: 1px; }
@@ -357,7 +381,6 @@ class LoteMasterPro {
 
         <script>
         document.addEventListener('DOMContentLoaded', function() {
-            // --- THREE.JS LOGIC CORREGIDA ---
             const container = document.getElementById('lmp-3d-canvas-<?php echo $post_id; ?>');
             if(!container) return;
 
@@ -368,8 +391,9 @@ class LoteMasterPro {
             scene.background = new THREE.Color(0x061a40); 
             scene.fog = new THREE.FogExp2(0x061a40, 0.002);
 
-            const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
-            camera.position.set(0, 800, 800);
+            // CÁMARA INICIAL: Más alta y lejana para ver más mapa al inicio
+            const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 6000);
+            camera.position.set(0, 1500, 1200); 
 
             const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
@@ -378,7 +402,9 @@ class LoteMasterPro {
 
             const controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true; controls.dampingFactor = 0.05;
-            controls.maxPolarAngle = Math.PI / 2.1; controls.minDistance = 50; controls.maxDistance = 2500;
+            controls.maxPolarAngle = Math.PI / 2.1; 
+            controls.minDistance = 50; 
+            controls.maxDistance = 4000;
 
             const raycaster = new THREE.Raycaster();
             const mouse = new THREE.Vector2();
@@ -395,100 +421,113 @@ class LoteMasterPro {
                 const geometry = new THREE.PlaneGeometry(planeW, planeH);
                 const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
                 const plane = new THREE.Mesh(geometry, material);
-                // IMPORTANTE: Rotamos el plano para que esté en el suelo
                 plane.rotation.x = -Math.PI / 2; 
                 scene.add(plane);
 
                 rawMarkers.forEach(data => {
-                    // --- CORRECCIÓN MATEMÁTICA DE POSICIÓN ---
-                    // 1. Usar dimensiones originales si existen, o las de la textura actual
                     const originalMapW = parseFloat(data.mapW) || imgW; 
                     const originalMapH = parseFloat(data.mapH) || imgH;
                     
-                    // 2. Centrar coordenadas
-                    // Leaflet Lng (0 a Width) -> Three X (-Width/2 a Width/2)
                     const normalizedX = (parseFloat(data.lng) - (originalMapW / 2)) / originalMapW;
                     const posX = normalizedX * planeW;
 
-                    // Leaflet Lat (0 a Height) -> Three Z (-Height/2 a Height/2)
-                    // En Leaflet ImageOverlay con bounds [[0,0], [H,W]], 0 es abajo, H es arriba.
-                    // En Three.js (Top View), -Z es arriba, +Z es abajo.
                     const normalizedY = (parseFloat(data.lat) - (originalMapH / 2)) / originalMapH;
-                    const posZ = -normalizedY * planeH; // Invertimos Z porque Lat va arriba y Z va abajo en visualización
+                    const posZ = -normalizedY * planeH; 
 
                     const color = data.status === 'available' ? '#2ecc71' : (data.status === 'reserved' ? '#f39c12' : '#e74c3c');
                     
+                    // AUMENTAR RESOLUCIÓN CANVAS PARA TEXTO NÍTIDO EN TAMAÑO PEQUEÑO
                     const canvas = document.createElement('canvas');
-                    canvas.width = 64; canvas.height = 64;
+                    canvas.width = 128; canvas.height = 128; // Doble resolución
                     const ctx = canvas.getContext('2d');
+                    
+                    // Círculo
                     ctx.beginPath();
-                    ctx.arc(32, 32, 28, 0, 2 * Math.PI);
+                    ctx.arc(64, 64, 58, 0, 2 * Math.PI);
                     ctx.fillStyle = color; ctx.fill();
-                    ctx.lineWidth = 4; ctx.strokeStyle = 'white'; ctx.stroke();
-                    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 10;
-                    ctx.fillStyle = 'white'; ctx.font = 'bold 22px Arial';
+                    ctx.lineWidth = 6; ctx.strokeStyle = 'white'; ctx.stroke();
+                    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 15;
+                    
+                    // Texto
+                    ctx.fillStyle = 'white'; 
+                    ctx.font = 'bold 44px Arial'; // Fuente más grande relativa al canvas
                     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                     ctx.shadowBlur = 0; 
-                    ctx.fillText(data.number, 32, 32);
+                    ctx.fillText(data.number, 64, 64);
 
                     const spriteMap = new THREE.CanvasTexture(canvas);
-                    // sizeAttenuation: true hace que se achiquen al alejarse la cámara (evita solapamiento masivo)
                     const spriteMat = new THREE.SpriteMaterial({ map: spriteMap, sizeAttenuation: true });
                     const sprite = new THREE.Sprite(spriteMat);
                     
-                    // Altura del pin: 20 unidades
                     sprite.position.set(posX, 20, posZ); 
                     
-                    // ESCALADO: Reducimos de 40 a 25 para que no se vean gigantes ni se solapen tanto
-                    sprite.scale.set(25, 25, 1); 
+                    // TAMAÑO BASE REDUCIDO PARA EVITAR SUPERPOSICIÓN INICIAL
+                    // Antes 25/40, ahora 12.
+                    sprite.scale.set(12, 12, 1); 
                     
                     sprite.userData = data; 
+                    // Guardar escala base para animaciones
+                    sprite.userData.baseScale = 12;
+                    
                     markersGroup.add(sprite);
                 });
 
-                gsap.from(camera.position, { duration: 2.5, y: 1800, z: 0, ease: "power3.out" });
+                // ANIMACIÓN DE ENTRADA LLAMATIVA
+                gsap.from(camera.position, { duration: 3, y: 3000, z: 2000, ease: "power3.out" });
             });
 
-            function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+            // --- ANIMATION LOOP CON LÓGICA LOD (LEVEL OF DETAIL) ---
+            function animate() {
+                requestAnimationFrame(animate);
+                controls.update();
+                
+                // LÓGICA DINÁMICA DE TAMAÑO SEGÚN DISTANCIA DE CÁMARA
+                // Esto previene que se vean "bolas gigantes" cuando estás lejos
+                if(markersGroup.children.length > 0) {
+                    const camDist = camera.position.distanceTo(new THREE.Vector3(0,0,0)); // Distancia aprox al centro
+                    
+                    markersGroup.children.forEach(sprite => {
+                        // Si la cámara está muy lejos (> 1500), reducir escala gradualmente
+                        // Si la cámara está cerca (< 800), mantener tamaño legible
+                        
+                        let targetScale = sprite.userData.baseScale;
+                        
+                        if (camDist > 1200) {
+                            // Lejos: Hacerlos más pequeños para evitar solapamiento masivo
+                            targetScale = 8; 
+                        } else if (camDist < 600) {
+                            // Muy Cerca: Aumentar un poco para legibilidad
+                            targetScale = 15;
+                        } else {
+                            // Intermedio
+                            targetScale = 12;
+                        }
+                        
+                        // Si está filtrado y oculto, forzar 0
+                        if(sprite.visible === false && sprite.scale.x < 1) targetScale = 0;
+
+                        // Lerp simple para suavidad (solo si es visible por filtro)
+                        if(sprite.visible) {
+                           sprite.scale.lerp(new THREE.Vector3(targetScale, targetScale, 1), 0.1);
+                        }
+                    });
+                }
+
+                renderer.render(scene, camera);
+            }
             animate();
 
-            // --- CLICK FIX PARA ESCRITORIO ---
-            // El problema era que "mousemove" bloqueaba el click. Ahora medimos si el mouse se movió.
+            // --- CLICK HANDLING ---
             let isDragging = false;
-            let startX = 0;
-            let startY = 0;
+            let startX = 0, startY = 0;
 
-            // MOUSE EVENTS
-            renderer.domElement.addEventListener('mousedown', (e) => {
-                isDragging = false;
-                startX = e.clientX;
-                startY = e.clientY;
-            });
-
+            renderer.domElement.addEventListener('mousedown', (e) => { isDragging = false; startX = e.clientX; startY = e.clientY; });
             renderer.domElement.addEventListener('mouseup', (e) => {
-                // Calcular distancia movida
-                const diffX = Math.abs(e.clientX - startX);
-                const diffY = Math.abs(e.clientY - startY);
-                
-                // Si se movió menos de 5 pixeles, es un Click. Si más, es Drag.
-                if (diffX < 5 && diffY < 5) {
-                    onCanvasClick(e);
-                }
+                if (Math.abs(e.clientX - startX) < 5 && Math.abs(e.clientY - startY) < 5) onCanvasClick(e);
             });
-
-            // TOUCH EVENTS
-            renderer.domElement.addEventListener('touchstart', (e) => {
-                startX = e.touches[0].clientX;
-                startY = e.touches[0].clientY;
-            }, {passive: false});
-
+            renderer.domElement.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; startY = e.touches[0].clientY; }, {passive: false});
             renderer.domElement.addEventListener('touchend', (e) => {
-                // Usamos changedTouches para obtener donde se levantó el dedo
-                const diffX = Math.abs(e.changedTouches[0].clientX - startX);
-                const diffY = Math.abs(e.changedTouches[0].clientY - startY);
-                if (diffX < 5 && diffY < 5) {
-                    onCanvasClick(e.changedTouches[0]);
-                }
+                if (Math.abs(e.changedTouches[0].clientX - startX) < 5 && Math.abs(e.changedTouches[0].clientY - startY) < 5) onCanvasClick(e.changedTouches[0]);
             }, {passive: false});
 
             function onCanvasClick(event) {
@@ -501,12 +540,13 @@ class LoteMasterPro {
                 if (intersects.length > 0) {
                     const obj = intersects[0].object;
                     openModal(obj.userData);
-                    gsap.to(camera.position, { duration: 1.2, x: obj.position.x, y: 200, z: obj.position.z + 150, ease: "power2.out" });
+                    // Acercar la cámara significativamente al hacer click para enfocar el lote
+                    gsap.to(camera.position, { duration: 1.5, x: obj.position.x, y: 150, z: obj.position.z + 100, ease: "power2.out" });
                     controls.target.set(obj.position.x, 0, obj.position.z);
                 }
             }
 
-            // Filtros
+            // --- FILTROS ---
             const filterCards = document.querySelectorAll('.lmp-filter-card');
             filterCards.forEach(card => {
                 card.addEventListener('click', function() {
@@ -515,8 +555,14 @@ class LoteMasterPro {
                     const filter = this.dataset.filter;
                     markersGroup.children.forEach(sprite => {
                         const isVisible = (filter === 'all' || sprite.userData.status === filter);
-                        if(isVisible) { sprite.visible = true; gsap.to(sprite.scale, {duration: 0.4, x: 25, y: 25}); } 
-                        else { gsap.to(sprite.scale, {duration: 0.4, x: 0, y: 0, onComplete: () => { sprite.visible = false; }}); }
+                        if(isVisible) { 
+                            sprite.visible = true; 
+                            // Restaurar al tamaño base, el loop de animación se encarga del resto
+                            // No usamos gsap aquí para evitar conflicto con el loop animate()
+                        } else { 
+                            // Para ocultar, sí usamos animación rápida a 0
+                            gsap.to(sprite.scale, {duration: 0.3, x: 0, y: 0, onComplete: () => { sprite.visible = false; }}); 
+                        }
                     });
                 });
             });
@@ -526,7 +572,7 @@ class LoteMasterPro {
                 camera.updateProjectionMatrix(); renderer.setSize(container.clientWidth, container.clientHeight);
             });
 
-            // MODAL LOGIC
+            // --- MODAL ---
             var modal = document.getElementById("lmp-modal-<?php echo $post_id; ?>");
             var close = modal.querySelector(".lmp-close");
             var form = modal.querySelector(".lmp-quote-form");
@@ -536,12 +582,10 @@ class LoteMasterPro {
                 modal.querySelector('.input-lot-number').value = data.number;
                 modal.querySelector('.modal-price').innerText = data.price;
                 modal.querySelector('.modal-area').innerText = data.area;
-                
                 var statusText = { 'available': 'Disponible', 'reserved': 'Apartado', 'sold': 'Vendido' };
                 var statusEl = modal.querySelector('.modal-status');
                 statusEl.innerText = statusText[data.status];
                 statusEl.className = 'modal-status st-' + data.status;
-                
                 form.style.display = data.status === 'sold' ? 'none' : 'block';
                 modal.style.display = "block";
             }
@@ -552,10 +596,7 @@ class LoteMasterPro {
                 var btn = form.querySelector('button');
                 var origText = btn.innerText;
                 btn.innerText = 'PROCESANDO...'; btn.disabled = true;
-                
-                var fd = new FormData(form); 
-                fd.append('action', 'lotemaster_send_quote');
-                
+                var fd = new FormData(form); fd.append('action', 'lotemaster_send_quote');
                 fetch('<?php echo admin_url('admin-ajax.php'); ?>', { method: 'POST', body: fd })
                 .then(r => r.json()).then(d => {
                     modal.querySelector('.lmp-msg').innerText = '¡Enviado! Revisa tu correo.';
@@ -568,24 +609,19 @@ class LoteMasterPro {
         return ob_get_clean();
     }
 
-    // -------------------------------------------------------------------------
-    // 5. HANDLE EMAIL (BRANDING CORREGIDO)
-    // -------------------------------------------------------------------------
+    // --- EMAIL ---
     public function handle_quote() {
         $name = sanitize_text_field($_POST['name']);
         $email = sanitize_email($_POST['email']);
         $phone = sanitize_text_field($_POST['phone']);
         $lot = sanitize_text_field($_POST['lot_number']);
-        
         $logo_url = 'https://alta57.com/wp-content/uploads/2026/02/LOGO-RIVIERA-HORIZONTAL-02.png';
         
-        // CORRECCIÓN: Nombre del proyecto en el remitente
         add_filter( 'wp_mail_from', function() { return 'inversionistas@alta57.com'; } );
         add_filter( 'wp_mail_from_name', function() { return 'Proyecto Riviera del Occidente'; } );
 
         $subject = "Confirmación de Interés - Lote #$lot";
         
-        // CORRECCIÓN: Botón y textos actualizados
         $message = '
         <!DOCTYPE html>
         <html>
@@ -612,24 +648,18 @@ class LoteMasterPro {
                 </div>
                 <div class="content">
                     <h1 class="greeting">Estimado/a '.$name.',</h1>
-                    <p class="text">Agradecemos profundamente su interés en el <strong>Proyecto Riviera del Occidente</strong>. Hemos recibido su solicitud de información.</p>
-                    
+                    <p class="text">Agradecemos profundamente su interés en el <strong>Proyecto Riviera del Occidente</strong>.</p>
                     <div class="lot-card">
                         <p class="lot-label">Unidad Seleccionada</p>
                         <p class="lot-number">LOTE '.$lot.'</p>
                     </div>
-
-                    <p class="text">Un asesor especializado se pondrá en contacto con usted al número <strong>'.$phone.'</strong> en las próximas horas.</p>
-                    
-                    <p class="text">Bienvenido a una vida de exclusividad.</p>
-                    
+                    <p class="text">Un asesor especializado se pondrá en contacto con usted al número <strong>'.$phone.'</strong>.</p>
                     <div style="text-align: center;">
                         <a href="https://rivieradeloccidente.alta57.com/" class="btn">VISITAR SITIO WEB</a>
                     </div>
                 </div>
                 <div class="footer">
-                    &copy; 2026 Proyecto Riviera del Occidente. Todos los derechos reservados.<br>
-                    Popayán, Colombia.
+                    &copy; 2026 Proyecto Riviera del Occidente.
                 </div>
             </div>
         </body>
@@ -637,7 +667,6 @@ class LoteMasterPro {
         ';
 
         $headers = array('Content-Type: text/html; charset=UTF-8');
-        
         wp_mail($email, $subject, $message, $headers);
         wp_mail('inversionistas@alta57.com', "Nuevo Lead Riviera - Lote $lot", "Cliente: $name\nTel: $phone\nEmail: $email");
 
