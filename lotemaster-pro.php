@@ -71,6 +71,7 @@ class LoteMasterPro {
         $map_image_id = get_post_meta($post->ID, '_lmp_image_id', true);
         $map_image_url = $map_image_id ? wp_get_attachment_url($map_image_id) : '';
         $markers = get_post_meta($post->ID, '_lmp_markers', true); 
+        $initial_zoom = get_post_meta($post->ID, '_lmp_initial_zoom', true);
         
         echo '<input type="hidden" name="lmp_image_id" id="lmp_image_id" value="' . esc_attr($map_image_id) . '">';
         echo '<textarea name="lmp_markers_json" id="lmp_markers_json" style="display:none;">' . esc_textarea($markers) . '</textarea>';
@@ -78,7 +79,11 @@ class LoteMasterPro {
         ?>
         <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
             <button type="button" class="button button-secondary" id="upload_map_btn"><span class="dashicons dashicons-format-image"></span> Cambiar Imagen</button>
-            <span class="description">Haz clic para añadir. Arrastra para mover.</span>
+            <label style="margin-left: 15px;">
+                <strong>Zoom Inicial:</strong>
+                <input type="number" step="0.1" name="lmp_initial_zoom" value="<?php echo esc_attr($initial_zoom); ?>" style="width: 70px;" placeholder="Auto">
+            </label>
+            <span class="description">Haz clic para añadir. Arrastra para mover. (Vacío = Ajustar a pantalla)</span>
         </div>
 
         <div style="display: flex; gap: 20px;">
@@ -246,6 +251,7 @@ class LoteMasterPro {
     public function save_data($post_id) {
         if (isset($_POST['lmp_image_id'])) update_post_meta($post_id, '_lmp_image_id', sanitize_text_field($_POST['lmp_image_id']));
         if (isset($_POST['lmp_markers_json'])) update_post_meta($post_id, '_lmp_markers', $_POST['lmp_markers_json']);
+        if (isset($_POST['lmp_initial_zoom'])) update_post_meta($post_id, '_lmp_initial_zoom', sanitize_text_field($_POST['lmp_initial_zoom']));
     }
 
     public function add_shortcode_column($columns) { $columns['shortcode'] = 'Shortcode'; return $columns; }
@@ -260,12 +266,28 @@ class LoteMasterPro {
         $map_image_id = get_post_meta($post_id, '_lmp_image_id', true);
         $map_image_url = $map_image_id ? wp_get_attachment_url($map_image_id) : '';
         $markers = get_post_meta($post_id, '_lmp_markers', true);
+        $initial_zoom = get_post_meta($post_id, '_lmp_initial_zoom', true);
         $logo_url = get_the_post_thumbnail_url($post_id, 'full');
         
         if(!$map_image_url) return '';
 
+        // Calcular Estadísticas
+        $markers_data = json_decode($markers, true);
+        if(!is_array($markers_data)) $markers_data = [];
+        $stats = ['total' => count($markers_data), 'available' => 0, 'reserved' => 0, 'sold' => 0];
+        foreach($markers_data as $m) {
+            if(isset($stats[$m['status']])) $stats[$m['status']]++;
+        }
+
         ob_start();
         ?>
+        <div class="lmp-filter-container">
+            <button class="lmp-tab active" data-filter="all"><span class="count"><?php echo $stats['total']; ?></span> Todos</button>
+            <button class="lmp-tab tab-available" data-filter="available"><span class="count"><?php echo $stats['available']; ?></span> Disponibles</button>
+            <button class="lmp-tab tab-reserved" data-filter="reserved"><span class="count"><?php echo $stats['reserved']; ?></span> Apartados</button>
+            <button class="lmp-tab tab-sold" data-filter="sold"><span class="count"><?php echo $stats['sold']; ?></span> Vendidos</button>
+        </div>
+
         <div id="lmp-wrapper-<?php echo $post_id; ?>" class="lmp-wrapper" style="--point-scale: 1;">
             
             <div id="lmp-front-map-<?php echo $post_id; ?>" class="lmp-map-container"></div>
@@ -315,11 +337,16 @@ class LoteMasterPro {
             var bounds;
             var img = new Image();
             img.src = '<?php echo $map_image_url; ?>';
+            var initialZoom = '<?php echo $initial_zoom; ?>';
             
             img.onload = function() {
                 bounds = [[0,0], [this.height, this.width]];
                 L.imageOverlay('<?php echo $map_image_url; ?>', bounds).addTo(map);
-                map.fitBounds(bounds);
+                if(initialZoom !== '') {
+                    map.setView(bounds.getCenter(), parseFloat(initialZoom));
+                } else {
+                    map.fitBounds(bounds);
+                }
             }
 
             var slider = document.getElementById('size-slider-<?php echo $post_id; ?>');
@@ -333,6 +360,8 @@ class LoteMasterPro {
             var modal = document.getElementById("lmp-modal-<?php echo $post_id; ?>");
             var close = modal.querySelector(".lmp-close");
             var form = modal.querySelector(".lmp-quote-form");
+
+            var markerInstances = [];
 
             markers.forEach(function(m) {
                 var colorClass = 'status-' + m.status;
@@ -353,6 +382,27 @@ class LoteMasterPro {
                 
                 marker.bindTooltip("Lote " + m.number, { direction: 'top', offset: [0, -15] });
                 marker.on('click', function() { openModal(m); });
+
+                marker.status = m.status;
+                markerInstances.push(marker);
+            });
+
+            // FILTRADO
+            var tabs = document.querySelectorAll('.lmp-filter-container .lmp-tab');
+            tabs.forEach(function(tab) {
+                tab.addEventListener('click', function() {
+                    tabs.forEach(function(t) { t.classList.remove('active'); });
+                    this.classList.add('active');
+                    var filter = this.getAttribute('data-filter');
+
+                    markerInstances.forEach(function(mk) {
+                        if(filter === 'all' || mk.status === filter) {
+                            if(!map.hasLayer(mk)) map.addLayer(mk);
+                        } else {
+                            if(map.hasLayer(mk)) map.removeLayer(mk);
+                        }
+                    });
+                });
             });
 
             function openModal(data) {
@@ -394,6 +444,23 @@ class LoteMasterPro {
         });
         </script>
         <style>
+            /* TABS CSS */
+            .lmp-filter-container { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; justify-content: center; }
+            .lmp-tab {
+                border: none; background: #f1f5f9; color: #64748b; padding: 10px 20px; border-radius: 30px;
+                cursor: pointer; font-weight: bold; font-family: sans-serif; transition: all 0.3s ease;
+                display: flex; align-items: center; gap: 8px; font-size: 14px;
+            }
+            .lmp-tab .count { background: #cbd5e1; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+            .lmp-tab:hover { background: #e2e8f0; transform: translateY(-2px); }
+
+            .lmp-tab.active { background: #0f172a; color: white; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.3); }
+            .lmp-tab.active .count { background: rgba(255,255,255,0.2); }
+
+            .lmp-tab.tab-available.active { background: #2ecc71; box-shadow: 0 4px 12px rgba(46, 204, 113, 0.4); }
+            .lmp-tab.tab-reserved.active { background: #f39c12; box-shadow: 0 4px 12px rgba(243, 156, 18, 0.4); }
+            .lmp-tab.tab-sold.active { background: #e74c3c; box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4); }
+
             .lmp-wrapper { position: relative; }
             .lmp-map-container { width: 100%; height: 85vh; background: #eee; border-radius: 8px; border: 1px solid #ddd; z-index: 1; }
 
